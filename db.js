@@ -1,4 +1,6 @@
 const Sequelize = require('sequelize');
+const jwt = require('jsonwebtoken')
+const bcrypt = require('bcrypt')
 const { STRING } = Sequelize;
 const config = {
   logging: false
@@ -13,6 +15,10 @@ const User = conn.define('user', {
   username: STRING,
   password: STRING
 });
+
+const Note = conn.define('note',{
+  text: STRING,
+})
 
 User.byToken = async(token)=> {
   try {
@@ -34,19 +40,42 @@ User.byToken = async(token)=> {
 User.authenticate = async({ username, password })=> {
   const user = await User.findOne({
     where: {
-      username,
-      password
+      username
     }
   });
   
-  if(user){
-    return jwt.sign(user.id); 
+  if(user && await bcrypt.compare(password, user.password)){
+    return jwt.sign({id:user.id},process.env.JWT); 
   }
   const error = Error('bad credentials');
   error.status = 401;
   throw error;
 };
 
+User.byToken = async function(token) {
+  try{
+    const {id} = await jwt.verify(token,process.env.JWT);
+    const user = await User.findByPk(id);
+    if(user){
+      return user;
+    }
+    const error = Error('bad credentials');
+    error.status = 401;
+    throw error;
+  }
+  catch(ex){
+    const error = Error('bad credentials');
+    error.status = 401;
+    throw error;
+  }
+}
+
+User.beforeCreate(async(user) => {
+  user.password = await bcrypt.hash(user.password, 10);
+})
+
+Note.belongsTo(User);
+User.hasMany(Note)
 
 const syncAndSeed = async()=> {
   await conn.sync({ force: true });
@@ -58,6 +87,12 @@ const syncAndSeed = async()=> {
   const [lucy, moe, larry] = await Promise.all(
     credentials.map( credential => User.create(credential))
   );
+
+  const notes = [ { text: 'hello world'}, { text: 'reminder to buy groceries'}, { text: 'reminder to do laundry'} ];
+  const [note1, note2, note3] = await Promise.all(notes.map( note => Note.create(note)));
+  await lucy.setNotes(note1);
+  await moe.setNotes([note2, note3]);
+
   return {
     users: {
       lucy,
@@ -70,6 +105,7 @@ const syncAndSeed = async()=> {
 module.exports = {
   syncAndSeed,
   models: {
-    User
+    User,
+    Note
   }
 };
